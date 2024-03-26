@@ -477,7 +477,8 @@ void    STDMETHODCALLTYPE D3D12Device::CreateShaderResourceView(ID3D12Resource *
 	update.table = table;
 	update.binding = 0;
 	update.array_offset = 0;
-	update.type = acceleration_structure ? reshade::api::descriptor_type::acceleration_structure : reshade::api::descriptor_type::shader_resource_view;
+	update.type = acceleration_structure ? reshade::api::descriptor_type::acceleration_structure :
+		internal_desc.ViewDimension == D3D12_SRV_DIMENSION_BUFFER ? reshade::api::descriptor_type::buffer_shader_resource_view : reshade::api::descriptor_type::texture_shader_resource_view;
 	update.count = 1;
 	update.descriptors = &descriptor_value;
 
@@ -520,7 +521,8 @@ void    STDMETHODCALLTYPE D3D12Device::CreateUnorderedAccessView(ID3D12Resource 
 	update.table = table;
 	update.binding = 0;
 	update.array_offset = 0;
-	update.type = reshade::api::descriptor_type::unordered_access_view;
+	update.type =
+		internal_desc.ViewDimension == D3D12_UAV_DIMENSION_BUFFER ? reshade::api::descriptor_type::buffer_unordered_access_view : reshade::api::descriptor_type::texture_unordered_access_view;
 	update.count = 1;
 	update.descriptors = &descriptor_value;
 
@@ -2330,7 +2332,7 @@ bool D3D12Device::invoke_create_and_init_pipeline_event(const D3D12_PIPELINE_STA
 		}
 		else
 		{
-			if (_interface_version < 2)
+			if (!check_and_upgrade_interface(__uuidof(ID3D12Device2)))
 				return false;
 
 			hr = static_cast<ID3D12Device2 *>(_orig)->CreatePipelineState(&internal_desc, IID_PPV_ARGS(&d3d_pipeline));
@@ -2574,9 +2576,9 @@ bool D3D12Device::invoke_create_and_init_pipeline_layout_event(UINT node_mask, c
 					if (param_type == D3D12_ROOT_PARAMETER_TYPE_CBV)
 						range.type = reshade::api::descriptor_type::constant_buffer;
 					else if (param_type == D3D12_ROOT_PARAMETER_TYPE_SRV)
-						range.type = reshade::api::descriptor_type::shader_resource_view;
+						range.type = reshade::api::descriptor_type::buffer_shader_resource_view;
 					else
-						range.type = reshade::api::descriptor_type::unordered_access_view;
+						range.type = reshade::api::descriptor_type::buffer_unordered_access_view;
 					break;
 				}
 				}
