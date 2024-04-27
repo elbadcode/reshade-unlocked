@@ -3833,8 +3833,10 @@ void reshade::runtime::draw_variable_editor()
 						}
 					}
 
-					if (!force_reload_effect && // Cannot compare iterators if definitions were just modified above
-						ImGui::BeginPopupContextItem())
+					if (force_reload_effect) // Cannot compare iterators if definitions were just modified above
+						continue;
+
+					if (ImGui::BeginPopupContextItem())
 					{
 						std::string reset_button_label = ICON_FK_UNDO " ";
 						reset_button_label += _("Reset to default");
@@ -3851,6 +3853,16 @@ void reshade::runtime::draw_variable_editor()
 						}
 
 						ImGui::EndPopup();
+					}
+
+					if (definition_scope == &effect_definitions)
+					{
+						ImGui::SameLine();
+						if (ImGui::SmallButton(ICON_FK_UNDO))
+						{
+							force_reload_effect = true;
+							definition_scope->erase(definition_it);
+						}
 					}
 				}
 			}

@@ -769,6 +769,69 @@ void reshade::runtime::on_present(api::command_queue *present_queue)
 		// Do not allow the following shortcuts while effects are being loaded or initialized (since they affect that state)
 		if (!is_loading())
 		{
+			if (_effects_enabled)
+			{
+				for (effect &effect : _effects)
+				{
+					if (!effect.rendering)
+						continue;
+
+					for (uniform &variable : effect.uniforms)
+					{
+						if (_input->is_key_pressed(variable.toggle_key_data, _force_shortcut_modifiers))
+						{
+							assert(variable.supports_toggle_key());
+
+							// Change to next value if the associated shortcut key was pressed
+							switch (variable.type.base)
+							{
+								case reshadefx::type::t_bool:
+								{
+									bool data = false;
+									get_uniform_value(variable, &data);
+									set_uniform_value(variable, !data);
+									break;
+								}
+								case reshadefx::type::t_int:
+								case reshadefx::type::t_uint:
+								{
+									int data[4] = {};
+									get_uniform_value(variable, data, 4);
+									const std::string_view ui_items = variable.annotation_as_string("ui_items");
+									int num_items = 0;
+									for (size_t offset = 0, next; (next = ui_items.find('\0', offset)) != std::string_view::npos; offset = next + 1)
+										num_items++;
+									data[0] = (data[0] + 1 >= num_items) ? 0 : data[0] + 1;
+									set_uniform_value(variable, data, 4);
+									break;
+								}
+							}
+
+							if (_auto_save_preset)
+								save_current_preset();
+							else
+								_preset_is_modified = true;
+						}
+					}
+				}
+
+				for (technique &tech : _techniques)
+				{
+					if (_input->is_key_pressed(tech.toggle_key_data, _force_shortcut_modifiers))
+					{
+						if (!tech.enabled)
+							enable_technique(tech);
+						else
+							disable_technique(tech);
+
+						if (_auto_save_preset)
+							save_current_preset();
+						else
+							_preset_is_modified = true;
+					}
+				}
+			}
+
 			if (_input->is_key_pressed(_reload_key_data, _force_shortcut_modifiers))
 				reload_effects();
 
@@ -2444,23 +2507,8 @@ bool reshade::runtime::create_effect(size_t effect_index)
 				assert(info.binding < 16);
 				sampler_list |= (1 << info.binding); // Maximum sampler slot count is 16, so a 16-bit integer is enough to hold all bindings
 
-				api::sampler_desc desc;
-				desc.filter = static_cast<api::filter_mode>(info.filter);
-				desc.address_u = static_cast<api::texture_address_mode>(info.address_u);
-				desc.address_v = static_cast<api::texture_address_mode>(info.address_v);
-				desc.address_w = static_cast<api::texture_address_mode>(info.address_w);
-				desc.mip_lod_bias = info.lod_bias;
-				desc.max_anisotropy = (desc.filter == api::filter_mode::anisotropic || desc.filter == api::filter_mode::min_mag_anisotropic_mip_point) ? 16.0f : 1.0f;
-				desc.compare_op = api::compare_op::always;
-				desc.border_color[0] = 0.0f;
-				desc.border_color[1] = 0.0f;
-				desc.border_color[2] = 0.0f;
-				desc.border_color[3] = 0.0f;
-				desc.min_lod = info.min_lod;
-				desc.max_lod = info.max_lod;
-
 				api::sampler &sampler_handle = sampler_descriptors[info.binding].sampler;
-				if (!create_effect_sampler_state(desc, sampler_handle))
+				if (!create_effect_sampler_state(info, sampler_handle))
 				{
 					LOG(ERROR) << "Failed to create sampler object '" << info.unique_name << "' in " << effect.source_file << '!';
 					return false;
@@ -2756,22 +2804,7 @@ bool reshade::runtime::create_effect(size_t effect_index)
 						write.type = api::descriptor_type::sampler_with_resource_view;
 						write.descriptors = &sampler_descriptors[info.binding];
 
-						api::sampler_desc desc;
-						desc.filter = static_cast<api::filter_mode>(info.filter);
-						desc.address_u = static_cast<api::texture_address_mode>(info.address_u);
-						desc.address_v = static_cast<api::texture_address_mode>(info.address_v);
-						desc.address_w = static_cast<api::texture_address_mode>(info.address_w);
-						desc.mip_lod_bias = info.lod_bias;
-						desc.max_anisotropy = 1;
-						desc.compare_op = api::compare_op::always;
-						desc.border_color[0] = 0.0f;
-						desc.border_color[1] = 0.0f;
-						desc.border_color[2] = 0.0f;
-						desc.border_color[3] = 0.0f;
-						desc.min_lod = info.min_lod;
-						desc.max_lod = info.max_lod;
-
-						if (!create_effect_sampler_state(desc, sampler_descriptors[info.binding].sampler))
+						if (!create_effect_sampler_state(info, sampler_descriptors[info.binding].sampler))
 						{
 							LOG(ERROR) << "Failed to create sampler object '" << info.unique_name << "' in " << effect.source_file << '!';
 							return false;
@@ -2851,8 +2884,23 @@ bool reshade::runtime::create_effect(size_t effect_index)
 
 	return true;
 }
-bool reshade::runtime::create_effect_sampler_state(const api::sampler_desc &desc, api::sampler &sampler)
+bool reshade::runtime::create_effect_sampler_state(const reshadefx::sampler_info &info, api::sampler &sampler)
 {
+	api::sampler_desc desc;
+	desc.filter = static_cast<api::filter_mode>(info.filter);
+	desc.address_u = static_cast<api::texture_address_mode>(info.address_u);
+	desc.address_v = static_cast<api::texture_address_mode>(info.address_v);
+	desc.address_w = static_cast<api::texture_address_mode>(info.address_w);
+	desc.mip_lod_bias = info.lod_bias;
+	desc.max_anisotropy = (desc.filter == api::filter_mode::anisotropic || desc.filter == api::filter_mode::min_mag_anisotropic_mip_point) ? 16.0f : 1.0f;
+	desc.compare_op = api::compare_op::always;
+	desc.border_color[0] = 0.0f;
+	desc.border_color[1] = 0.0f;
+	desc.border_color[2] = 0.0f;
+	desc.border_color[3] = 0.0f;
+	desc.min_lod = info.min_lod;
+	desc.max_lod = info.max_lod;
+
 	// Generate hash for sampler description
 	size_t desc_hash = 2166136261;
 	for (int i = 0; i < sizeof(desc); ++i)
@@ -3869,38 +3917,6 @@ void reshade::runtime::render_effects(api::command_list *cmd_list, api::resource
 
 		for (uniform &variable : effect.uniforms)
 		{
-			if (!_ignore_shortcuts && _input != nullptr && _input->is_key_pressed(variable.toggle_key_data, _force_shortcut_modifiers))
-			{
-				assert(variable.supports_toggle_key());
-
-				// Change to next value if the associated shortcut key was pressed
-				switch (variable.type.base)
-				{
-					case reshadefx::type::t_bool:
-					{
-						bool data = false;
-						get_uniform_value(variable, &data);
-						set_uniform_value(variable, !data);
-						break;
-					}
-					case reshadefx::type::t_int:
-					case reshadefx::type::t_uint:
-					{
-						int data[4] = {};
-						get_uniform_value(variable, data, 4);
-						const std::string_view ui_items = variable.annotation_as_string("ui_items");
-						int num_items = 0;
-						for (size_t offset = 0, next; (next = ui_items.find('\0', offset)) != std::string_view::npos; offset = next + 1)
-							num_items++;
-						data[0] = (data[0] + 1 >= num_items) ? 0 : data[0] + 1;
-						set_uniform_value(variable, data, 4);
-						break;
-					}
-				}
-
-				save_current_preset();
-			}
-
 			switch (variable.special)
 			{
 				case special_uniform::frame_time:
@@ -4120,14 +4136,6 @@ void reshade::runtime::render_effects(api::command_list *cmd_list, api::resource
 	for (size_t technique_index : _technique_sorting)
 	{
 		technique &tech = _techniques[technique_index];
-
-		if (!_ignore_shortcuts && _input != nullptr && _input->is_key_pressed(tech.toggle_key_data, _force_shortcut_modifiers))
-		{
-			if (!tech.enabled)
-				enable_technique(tech);
-			else
-				disable_technique(tech);
-		}
 
 		if (tech.passes_data.empty() || !tech.enabled || (_should_save_screenshot && !tech.enabled_in_screenshot))
 			continue; // Ignore techniques that are not fully loaded or currently disabled

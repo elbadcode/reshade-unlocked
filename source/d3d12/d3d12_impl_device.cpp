@@ -1844,6 +1844,8 @@ bool reshade::d3d12::device_impl::wait(api::fence fence, uint64_t value, uint64_
 	DWORD res = WAIT_FAILED;
 
 	const HANDLE temp_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	if (temp_event == nullptr)
+		return false;
 	if (SUCCEEDED(reinterpret_cast<ID3D12Fence *>(fence.handle)->SetEventOnCompletion(value, temp_event)))
 		res = WaitForSingleObject(temp_event, (timeout == UINT64_MAX) ? INFINITE : (timeout / 1000000) & 0xFFFFFFFF);
 
@@ -1991,6 +1993,25 @@ void reshade::d3d12::device_impl::unregister_resource(ID3D12Resource *resource)
 #endif
 }
 
+void reshade::d3d12::device_impl::register_resource_view(D3D12_CPU_DESCRIPTOR_HANDLE handle, ID3D12Resource *resource, api::resource_view_desc desc)
+{
+	// Get default view description when none was provided
+	if (resource != nullptr && desc.type == api::resource_view_type::unknown)
+		desc = convert_resource_view_desc(resource->GetDesc());
+
+	const std::unique_lock<std::shared_mutex> lock(_resource_mutex);
+	_views.insert_or_assign(handle.ptr, std::make_pair(resource, std::move(desc)));
+}
+void reshade::d3d12::device_impl::register_resource_view(D3D12_CPU_DESCRIPTOR_HANDLE handle, D3D12_CPU_DESCRIPTOR_HANDLE source_handle)
+{
+	const std::unique_lock<std::shared_mutex> lock(_resource_mutex);
+
+	if (const auto it = _views.find(source_handle.ptr); it != _views.end())
+		_views.insert_or_assign(handle.ptr, it->second);
+	else
+		assert(false);
+}
+
 reshade::d3d12::command_list_immediate_impl *reshade::d3d12::device_impl::get_first_immediate_command_list()
 {
 	assert(!_queues.empty());
@@ -2085,7 +2106,7 @@ void D3D12DescriptorHeap::initialize_descriptor_base_handle(size_t heap_index)
 	assert(heap_desc.Type <= 0x3);
 	_internal_base_cpu_handle.ptr |= heap_desc.Type;
 	assert(heap_desc.Flags <= 0x1);
-	_internal_base_cpu_handle.ptr |= heap_desc.Flags << 2;
+	_internal_base_cpu_handle.ptr |= static_cast<SIZE_T>(heap_desc.Flags) << 2;
 
 #ifdef _WIN64
 	static_assert((D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_2 * 32) < (1 << heap_index_start));
