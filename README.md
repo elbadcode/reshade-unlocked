@@ -1,6 +1,8 @@
 ReShade
 =======
 
+This is an unofficial fork with minor changes enhancing usage with addons and in protected games like Genshin Impact or Xbox Store titles. I value keeping this up to date with the main repository as much as possible with only sensible changes making it into the main branch here. Networking will not disable addons and the base path will always be based on the DLL rather than the game directory. You can still use this as a dxgi.dll wrapper but the intended use case is to have this in a separate folder and inject via the injector tool or an additional tool like my fork of genshin-fps-unlocker. I am exploring more experimental changes in local branches including changes to the default addons and implementation of some imgui features. Anything useful will either make it into main branch here or become a pull request. The information below is the unmodified readme from Crosire
+
 This is a generic post-processing injector for games and video software. It exposes an automated way to access both frame color and depth information and a custom shader language called ReShade FX to write effects like ambient occlusion, depth of field, color correction and more which work everywhere.
 
 ReShade can optionally load **add-ons**, DLLs that make use of the ReShade API to extend functionality of both ReShade and/or the application ReShade is being applied to. To get started on how to write your own add-on, check out the [API reference](REFERENCE.md).
