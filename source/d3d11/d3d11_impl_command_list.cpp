@@ -25,7 +25,8 @@ void reshade::d3d11::pipeline_impl::apply(ID3D11DeviceContext *ctx, api::pipelin
 	if ((stages & api::pipeline_stage::input_assembler) != 0)
 	{
 		ctx->IASetInputLayout(input_layout.get());
-		ctx->IASetPrimitiveTopology(topology);
+		if (topology != D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED)
+			ctx->IASetPrimitiveTopology(topology);
 	}
 
 	if ((stages & api::pipeline_stage::rasterizer) != 0)
@@ -234,6 +235,13 @@ void reshade::d3d11::device_context_impl::bind_pipeline(api::pipeline_stage stag
 	case api::pipeline_stage::output_merger:
 		_orig->OMSetBlendState(reinterpret_cast<ID3D11BlendState *>(pipeline.handle), nullptr, D3D11_DEFAULT_SAMPLE_MASK);
 		break;
+	case api::pipeline_stage::all:
+		if (pipeline.handle == 0)
+		{
+			_orig->ClearState();
+			break;
+		}
+		[[fallthrough]];
 	default:
 		assert(false);
 		break;
@@ -249,30 +257,41 @@ void reshade::d3d11::device_context_impl::bind_pipeline_states(uint32_t count, c
 			_orig->IASetPrimitiveTopology(convert_primitive_topology(static_cast<api::primitive_topology>(values[i])));
 			break;
 		case api::dynamic_state::blend_constant:
-		{
-			com_ptr<ID3D11BlendState> state;
-			const float blend_constant[4] = { ((values[i]) & 0xFF) / 255.0f, ((values[i] >> 4) & 0xFF) / 255.0f, ((values[i] >> 8) & 0xFF) / 255.0f, ((values[i] >> 12) & 0xFF) / 255.0f };
-			UINT sample_mask = D3D11_DEFAULT_SAMPLE_MASK;
-			_orig->OMGetBlendState(&state, nullptr, &sample_mask);
-			_orig->OMSetBlendState(state.get(), blend_constant, sample_mask);
+			if (const float blend_constant[4] = { ((values[i]) & 0xFF) / 255.0f, ((values[i] >> 4) & 0xFF) / 255.0f, ((values[i] >> 8) & 0xFF) / 255.0f, ((values[i] >> 12) & 0xFF) / 255.0f };
+				i + 1 < count &&
+				states[i + 1] == api::dynamic_state::sample_mask)
+			{
+				com_ptr<ID3D11BlendState> state;
+				_orig->OMGetBlendState(&state, nullptr, nullptr);
+				_orig->OMSetBlendState(state.get(), blend_constant, values[i + 1]);
+				i += 1;
+			}
+			else
+			{
+				com_ptr<ID3D11BlendState> state;
+				UINT sample_mask = D3D11_DEFAULT_SAMPLE_MASK;
+				_orig->OMGetBlendState(&state, nullptr, &sample_mask);
+				_orig->OMSetBlendState(state.get(), blend_constant, sample_mask);
+			}
 			break;
-		}
 		case api::dynamic_state::sample_mask:
-		{
-			com_ptr<ID3D11BlendState> state;
-			float blend_constant[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-			const UINT sample_mask = values[i];
-			_orig->OMGetBlendState(&state, blend_constant, nullptr);
-			_orig->OMSetBlendState(state.get(), blend_constant, sample_mask);
+			{
+				com_ptr<ID3D11BlendState> state;
+				float blend_constant[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+				_orig->OMGetBlendState(&state, blend_constant, nullptr);
+				_orig->OMSetBlendState(state.get(), blend_constant, values[i]);
+			}
 			break;
-		}
 		case api::dynamic_state::front_stencil_reference_value:
-		{
-			com_ptr<ID3D11DepthStencilState> state;
-			_orig->OMGetDepthStencilState(&state, nullptr);
-			_orig->OMSetDepthStencilState(state.get(), values[i]);
+			{
+				com_ptr<ID3D11DepthStencilState> state;
+				_orig->OMGetDepthStencilState(&state, nullptr);
+				_orig->OMSetDepthStencilState(state.get(), values[i]);
+			}
 			break;
-		}
+		case api::dynamic_state::back_stencil_reference_value:
+			// Ignore
+			break;
 		default:
 			assert(false);
 			break;
@@ -473,7 +492,7 @@ void reshade::d3d11::device_context_impl::push_constants(api::shader_stage stage
 
 	std::memcpy(_push_constants_data.data() + first, values, (count - first) * sizeof(uint32_t));
 
-	const auto push_constants = _push_constants.get();
+	ID3D11Buffer *const push_constants = _push_constants.get();
 
 	// Discard the buffer so driver can return a new memory region to avoid stalls
 	if (D3D11_MAPPED_SUBRESOURCE mapped;
@@ -483,7 +502,7 @@ void reshade::d3d11::device_context_impl::push_constants(api::shader_stage stage
 		_orig->Unmap(push_constants, 0);
 	}
 
-	UINT push_constants_slot = 0;
+	uint32_t push_constants_slot = 0;
 	if (layout.handle != 0 && layout != global_pipeline_layout)
 	{
 		const api::descriptor_range &range = reinterpret_cast<pipeline_layout_impl *>(layout.handle)->ranges[layout_param];

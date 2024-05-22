@@ -560,7 +560,7 @@ void    STDMETHODCALLTYPE D3D12Device::CreateDepthStencilView(ID3D12Resource *pR
 
 	// Calling with no resource is valid and used to initialize a null descriptor (see https://docs.microsoft.com/windows/win32/api/d3d12/nf-d3d12-id3d12device-createdepthstencilview)
 	if (pResource != nullptr &&
-		reshade::invoke_addon_event<reshade::addon_event::create_resource_view>(this, to_handle(pResource), reshade::api::resource_usage::depth_stencil, desc))
+		reshade::invoke_addon_event<reshade::addon_event::create_resource_view>(this, to_handle(pResource), internal_desc.Flags != 0 ? reshade::api::resource_usage::depth_stencil_read : reshade::api::resource_usage::depth_stencil, desc))
 	{
 		reshade::d3d12::convert_resource_view_desc(desc, internal_desc);
 		pDesc = &internal_desc;
@@ -571,7 +571,7 @@ void    STDMETHODCALLTYPE D3D12Device::CreateDepthStencilView(ID3D12Resource *pR
 
 #if RESHADE_ADDON
 	register_resource_view(DestDescriptor, pResource, desc);
-	reshade::invoke_addon_event<reshade::addon_event::init_resource_view>(this, to_handle(pResource), reshade::api::resource_usage::depth_stencil, desc, to_handle(DestDescriptor));
+	reshade::invoke_addon_event<reshade::addon_event::init_resource_view>(this, to_handle(pResource), internal_desc.Flags != 0 ? reshade::api::resource_usage::depth_stencil_read : reshade::api::resource_usage::depth_stencil, desc, to_handle(DestDescriptor));
 #endif
 }
 void    STDMETHODCALLTYPE D3D12Device::CreateSampler(const D3D12_SAMPLER_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
@@ -2180,7 +2180,9 @@ bool D3D12Device::invoke_create_and_init_pipeline_event(const D3D12_STATE_OBJECT
 			subobjects.push_back({ reshade::api::pipeline_subobject_type::depth_stencil_state, 1, &depth_stencil_desc });
 			break;
 		case D3D12_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT:
-			input_layout = reshade::d3d12::convert_input_layout_desc(*static_cast<const D3D12_INPUT_LAYOUT_DESC *>(subobject.pDesc));
+			input_layout.reserve(static_cast<const D3D12_INPUT_LAYOUT_DESC *>(subobject.pDesc)->NumElements);
+			for (UINT elem_index = 0; elem_index < static_cast<const D3D12_INPUT_LAYOUT_DESC *>(subobject.pDesc)->NumElements; ++elem_index)
+				input_layout.push_back(reshade::d3d12::convert_input_element(static_cast<const D3D12_INPUT_LAYOUT_DESC *>(subobject.pDesc)->pInputElementDescs[elem_index]));
 			subobjects.push_back({ reshade::api::pipeline_subobject_type::input_layout, static_cast<uint32_t>(input_layout.size()), input_layout.data()});
 			break;
 		case D3D12_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE:
@@ -2399,7 +2401,9 @@ bool D3D12Device::invoke_create_and_init_pipeline_event(const D3D12_PIPELINE_STA
 			p += sizeof(D3D12_PIPELINE_STATE_STREAM_DEPTH_STENCIL);
 			continue;
 		case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT:
-			input_layout = reshade::d3d12::convert_input_layout_desc(reinterpret_cast<const D3D12_PIPELINE_STATE_STREAM_INPUT_LAYOUT *>(p)->data);
+			input_layout.reserve(reinterpret_cast<const D3D12_PIPELINE_STATE_STREAM_INPUT_LAYOUT *>(p)->data.NumElements);
+			for (UINT elem_index = 0; elem_index < reinterpret_cast<const D3D12_PIPELINE_STATE_STREAM_INPUT_LAYOUT *>(p)->data.NumElements; ++elem_index)
+				input_layout.push_back(reshade::d3d12::convert_input_element(reinterpret_cast<const D3D12_PIPELINE_STATE_STREAM_INPUT_LAYOUT *>(p)->data.pInputElementDescs[elem_index]));
 			subobjects.push_back({ reshade::api::pipeline_subobject_type::input_layout, static_cast<uint32_t>(input_layout.size()), input_layout.data() });
 			p += sizeof(D3D12_PIPELINE_STATE_STREAM_INPUT_LAYOUT);
 			continue;

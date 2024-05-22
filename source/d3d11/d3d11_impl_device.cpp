@@ -383,9 +383,14 @@ bool reshade::d3d11::device_impl::create_resource_view(api::resource resource, a
 	switch (usage_type)
 	{
 		case api::resource_usage::depth_stencil:
+		case api::resource_usage::depth_stencil_read:
+		case api::resource_usage::depth_stencil_write:
 		{
 			D3D11_DEPTH_STENCIL_VIEW_DESC internal_desc = {};
 			convert_resource_view_desc(desc, internal_desc);
+
+			if (usage_type == api::resource_usage::depth_stencil_read)
+				internal_desc.Flags |= D3D11_DSV_READ_ONLY_DEPTH;
 
 			if (com_ptr<ID3D11DepthStencilView> object;
 				SUCCEEDED(_orig->CreateDepthStencilView(reinterpret_cast<ID3D11Resource *>(resource.handle), desc.type != api::resource_view_type::unknown ? &internal_desc : nullptr, &object)))
@@ -664,12 +669,12 @@ bool reshade::d3d11::device_impl::create_pipeline(api::pipeline_layout, uint32_t
 	com_ptr<ID3D11BlendState> blend_state;
 	com_ptr<ID3D11RasterizerState> rasterizer_state;
 	com_ptr<ID3D11DepthStencilState> depth_stencil_state;
-	api::primitive_topology topology = api::primitive_topology::triangle_list;
+	api::primitive_topology topology = api::primitive_topology::undefined;
 	uint32_t sample_mask = UINT32_MAX;
 	uint32_t stencil_reference_value = 0;
 	float blend_constant[4] = {};
 
-	if (subobject_count == 1)
+	if (subobject_count == 1 || (subobject_count == 2 && subobjects[1].type == api::pipeline_subobject_type::dynamic_pipeline_states))
 	{
 		if (subobjects->count != 0)
 		{
@@ -870,12 +875,19 @@ bool reshade::d3d11::device_impl::create_input_layout(uint32_t count, const api:
 {
 	static_assert(alignof(ID3D11InputLayout) >= 2);
 
-	std::vector<D3D11_INPUT_ELEMENT_DESC> internal_elements;
-	convert_input_layout_desc(count, desc, internal_elements);
+	// Empty input layout is valid, but generates a warning, so just return success and a zero handle
+	if (count == 0)
+	{
+		*out_handle = { 0 };
+		return true;
+	}
+
+	std::vector<D3D11_INPUT_ELEMENT_DESC> internal_desc(count);
+	for (uint32_t i = 0; i < count; ++i)
+		convert_input_element(desc[i], internal_desc[i]);
 
 	if (com_ptr<ID3D11InputLayout> object;
-		internal_elements.empty() || // Empty input layout is valid, but generates a warning, so just return success and a zero handle
-		SUCCEEDED(_orig->CreateInputLayout(internal_elements.data(), static_cast<UINT>(internal_elements.size()), signature.code, signature.code_size, &object)))
+		SUCCEEDED(_orig->CreateInputLayout(internal_desc.data(), static_cast<UINT>(internal_desc.size()), signature.code, signature.code_size, &object)))
 	{
 		*out_handle = to_handle(object.release());
 		return true;
@@ -1159,6 +1171,7 @@ bool reshade::d3d11::device_impl::create_pipeline_layout(uint32_t param_count, c
 				return false;
 			break;
 		case api::pipeline_layout_param_type::push_constants:
+			merged_range.binding = params[i].push_constants.binding;
 			merged_range.dx_register_index = params[i].push_constants.dx_register_index;
 			merged_range.dx_register_space = params[i].push_constants.dx_register_space;
 			if (merged_range.dx_register_space != 0)

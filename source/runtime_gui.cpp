@@ -2557,6 +2557,7 @@ void reshade::runtime::draw_gui_statistics()
 		ImGui::TextUnformatted(_("Time:"));
 		ImGui::Text(_("Frame %llu:"), _frame_count + 1);
 #if RESHADE_FX
+		ImGui::TextUnformatted(_("Resolution:"));
 		ImGui::TextUnformatted(_("Post-Processing:"));
 #endif
 
@@ -2596,6 +2597,7 @@ void reshade::runtime::draw_gui_statistics()
 		ImGui::Text("%d-%d-%d %d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
 		ImGui::Text("%.2f fps", _imgui_context->IO.Framerate);
 #if RESHADE_FX
+		ImGui::Text("%ux%u", _effect_width, _effect_height);
 		ImGui::Text("%*.3f ms CPU", cpu_digits + 4, post_processing_time_cpu * 1e-6f);
 #endif
 
@@ -2612,6 +2614,7 @@ void reshade::runtime::draw_gui_statistics()
 		ImGui::Text("%.0f ms", std::chrono::duration_cast<std::chrono::nanoseconds>(_last_present_time - _start_time).count() * 1e-6f);
 		ImGui::Text("%*.3f ms", gpu_digits + 4, _last_frame_duration.count() * 1e-6f);
 #if RESHADE_FX
+		ImGui::Text("format %u", _effect_color_format);
 		if (_gather_gpu_statistics && post_processing_time_gpu != 0)
 			ImGui::Text("%*.3f ms GPU", gpu_digits + 4, (post_processing_time_gpu * 1e-6f));
 #endif
@@ -4592,8 +4595,10 @@ bool reshade::runtime::init_imgui_resources()
 		{ 1, "TEXCOORD", 0, api::format::r32g32_float,   0, offsetof(ImDrawVert, uv ), sizeof(ImDrawVert), 0 },
 		{ 2, "COLOR",    0, api::format::r8g8b8a8_unorm, 0, offsetof(ImDrawVert, col), sizeof(ImDrawVert), 0 }
 	};
-
 	subobjects.push_back({ api::pipeline_subobject_type::input_layout, 3, (void *)input_layout });
+
+	api::primitive_topology topology = api::primitive_topology::triangle_list;
+	subobjects.push_back({ api::pipeline_subobject_type::primitive_topology, 1, &topology });
 
 	api::blend_desc blend_state;
 	blend_state.blend_enable[0] = true;
@@ -4604,24 +4609,20 @@ bool reshade::runtime::init_imgui_resources()
 	blend_state.dest_alpha_blend_factor[0] = api::blend_factor::one_minus_source_alpha;
 	blend_state.alpha_blend_op[0] = api::blend_op::add;
 	blend_state.render_target_write_mask[0] = 0xF;
-
 	subobjects.push_back({ api::pipeline_subobject_type::blend_state, 1, &blend_state });
 
 	api::rasterizer_desc rasterizer_state;
 	rasterizer_state.cull_mode = api::cull_mode::none;
 	rasterizer_state.scissor_enable = true;
-
 	subobjects.push_back({ api::pipeline_subobject_type::rasterizer_state, 1, &rasterizer_state });
 
 	api::depth_stencil_desc depth_stencil_state;
 	depth_stencil_state.depth_enable = false;
 	depth_stencil_state.stencil_enable = false;
-
 	subobjects.push_back({ api::pipeline_subobject_type::depth_stencil_state, 1, &depth_stencil_state });
 
 	// Always choose non-sRGB format variant, since 'render_imgui_draw_data' is called with the non-sRGB render target (see 'draw_gui')
 	api::format render_target_format = api::format_to_default_typed(_back_buffer_format, 0);
-
 	subobjects.push_back({ api::pipeline_subobject_type::render_target_formats, 1, &render_target_format });
 
 	if (_device->create_pipeline(_imgui_pipeline_layout, static_cast<uint32_t>(subobjects.size()), subobjects.data(), &_imgui_pipeline))

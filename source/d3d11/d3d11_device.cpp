@@ -554,7 +554,7 @@ HRESULT STDMETHODCALLTYPE D3D11Device::CreateDepthStencilView(ID3D11Resource *pR
 	D3D11_DEPTH_STENCIL_VIEW_DESC internal_desc = (pDesc != nullptr) ? *pDesc : D3D11_DEPTH_STENCIL_VIEW_DESC { DXGI_FORMAT_UNKNOWN, D3D11_DSV_DIMENSION_UNKNOWN };
 	auto desc = reshade::d3d11::convert_resource_view_desc(internal_desc);
 
-	if (reshade::invoke_addon_event<reshade::addon_event::create_resource_view>(this, to_handle(pResource), reshade::api::resource_usage::depth_stencil, desc))
+	if (reshade::invoke_addon_event<reshade::addon_event::create_resource_view>(this, to_handle(pResource), internal_desc.Flags != 0 ? reshade::api::resource_usage::depth_stencil_read : reshade::api::resource_usage::depth_stencil, desc))
 	{
 		reshade::d3d11::convert_resource_view_desc(desc, internal_desc);
 		pDesc = &internal_desc;
@@ -567,7 +567,7 @@ HRESULT STDMETHODCALLTYPE D3D11Device::CreateDepthStencilView(ID3D11Resource *pR
 #if RESHADE_ADDON
 		ID3D11DepthStencilView *const resource_view = *ppDepthStencilView;
 
-		reshade::invoke_addon_event<reshade::addon_event::init_resource_view>(this, to_handle(pResource), reshade::api::resource_usage::depth_stencil, desc, to_handle(resource_view));
+		reshade::invoke_addon_event<reshade::addon_event::init_resource_view>(this, to_handle(pResource), internal_desc.Flags != 0 ? reshade::api::resource_usage::depth_stencil_read : reshade::api::resource_usage::depth_stencil, desc, to_handle(resource_view));
 
 		if (reshade::has_addon_event<reshade::addon_event::destroy_resource_view>())
 		{
@@ -592,23 +592,28 @@ HRESULT STDMETHODCALLTYPE D3D11Device::CreateInputLayout(const D3D11_INPUT_ELEME
 	if (ppInputLayout == nullptr) // This can happen when application only wants to validate input parameters
 		return _orig->CreateInputLayout(pInputElementDescs, NumElements, pShaderBytecodeWithInputSignature, BytecodeLength, ppInputLayout);
 
-	std::vector<D3D11_INPUT_ELEMENT_DESC> internal_elements;
-	auto elements = reshade::d3d11::convert_input_layout_desc(NumElements, pInputElementDescs);
+	std::vector<D3D11_INPUT_ELEMENT_DESC> internal_desc; std::vector<reshade::api::input_element> desc;
+	desc.reserve(NumElements);
+	for (UINT i = 0; i < NumElements; ++i)
+		desc.push_back(reshade::d3d11::convert_input_element(pInputElementDescs[i]));
 
 	reshade::api::shader_desc signature_desc = {};
 	signature_desc.code = pShaderBytecodeWithInputSignature;
 	signature_desc.code_size = BytecodeLength;
 
 	const reshade::api::pipeline_subobject subobjects[] = {
-		{ reshade::api::pipeline_subobject_type::input_layout, static_cast<uint32_t>(elements.size()), elements.data() },
+		{ reshade::api::pipeline_subobject_type::input_layout, static_cast<uint32_t>(desc.size()), desc.data() },
 		{ reshade::api::pipeline_subobject_type::vertex_shader, 1, &signature_desc }
 	};
 
 	if (reshade::invoke_addon_event<reshade::addon_event::create_pipeline>(this, reshade::d3d11::global_pipeline_layout, static_cast<uint32_t>(std::size(subobjects)), subobjects))
 	{
-		reshade::d3d11::convert_input_layout_desc(static_cast<uint32_t>(elements.size()), elements.data(), internal_elements);
-		pInputElementDescs = internal_elements.data();
-		NumElements = static_cast<UINT>(internal_elements.size());
+		internal_desc.reserve(desc.size());
+		for (size_t i = 0; i < desc.size(); ++i)
+			reshade::d3d11::convert_input_element(desc[i], internal_desc.emplace_back());
+
+		pInputElementDescs = internal_desc.data();
+		NumElements = static_cast<UINT>(internal_desc.size());
 		pShaderBytecodeWithInputSignature = signature_desc.code;
 		BytecodeLength = signature_desc.code_size;
 	}

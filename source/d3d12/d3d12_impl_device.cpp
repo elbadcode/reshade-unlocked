@@ -415,15 +415,14 @@ bool reshade::d3d12::device_impl::create_resource_view(api::resource resource, a
 {
 	*out_handle = { 0 };
 
-	if (resource.handle == 0)
-		return false;
-
 	// Cannot create a resource view with a typeless format
 	assert(desc.format != api::format_to_typeless(desc.format) || api::format_to_typeless(desc.format) == api::format_to_default_typed(desc.format));
 
 	switch (usage_type)
 	{
 		case api::resource_usage::depth_stencil:
+		case api::resource_usage::depth_stencil_read:
+		case api::resource_usage::depth_stencil_write:
 		{
 			D3D12_CPU_DESCRIPTOR_HANDLE descriptor_handle;
 			if (!_view_heaps[D3D12_DESCRIPTOR_HEAP_TYPE_DSV].allocate(descriptor_handle))
@@ -431,6 +430,9 @@ bool reshade::d3d12::device_impl::create_resource_view(api::resource resource, a
 
 			D3D12_DEPTH_STENCIL_VIEW_DESC internal_desc = {};
 			convert_resource_view_desc(desc, internal_desc);
+
+			if (usage_type == api::resource_usage::depth_stencil_read)
+				internal_desc.Flags |= D3D12_DSV_FLAG_READ_ONLY_DEPTH;
 
 			_orig->CreateDepthStencilView(reinterpret_cast<ID3D12Resource *>(resource.handle), desc.type != api::resource_view_type::unknown ? &internal_desc : nullptr, descriptor_handle);
 
@@ -487,6 +489,9 @@ bool reshade::d3d12::device_impl::create_resource_view(api::resource resource, a
 		case api::resource_usage::acceleration_structure:
 		{
 			assert(desc.type == api::resource_view_type::unknown || desc.type == api::resource_view_type::buffer || desc.type == api::resource_view_type::acceleration_structure);
+
+			if (resource.handle == 0)
+				break;
 
 			const D3D12_GPU_VIRTUAL_ADDRESS address = reinterpret_cast<ID3D12Resource *>(resource.handle)->GetGPUVirtualAddress() +
 				(desc.type == api::resource_view_type::buffer || desc.type == api::resource_view_type::acceleration_structure ? desc.buffer.offset : 0);
@@ -779,7 +784,7 @@ bool reshade::d3d12::device_impl::create_pipeline(api::pipeline_layout layout, u
 	api::blend_desc blend_desc = {};
 	api::rasterizer_desc rasterizer_desc = {};
 	api::depth_stencil_desc depth_stencil_desc = {};
-	api::primitive_topology topology = api::primitive_topology::triangle_list;
+	api::primitive_topology topology = api::primitive_topology::undefined;
 	api::format depth_stencil_format = api::format::unknown;
 	api::pipeline_subobject render_target_formats = {};
 	uint32_t sample_mask = UINT32_MAX;
@@ -1189,12 +1194,15 @@ bool reshade::d3d12::device_impl::create_pipeline(api::pipeline_layout layout, u
 			if (com_ptr<ID3D12PipelineState> pipeline;
 				SUCCEEDED(device2->CreatePipelineState(&stream_desc, IID_PPV_ARGS(&pipeline))))
 			{
-				pipeline_extra_data extra_data;
-				extra_data.topology = convert_primitive_topology(topology);
+				if (topology != api::primitive_topology::undefined)
+				{
+					pipeline_extra_data extra_data;
+					extra_data.topology = convert_primitive_topology(topology);
 
-				std::copy_n(blend_desc.blend_constant, 4, extra_data.blend_constant);
+					std::copy_n(blend_desc.blend_constant, 4, extra_data.blend_constant);
 
-				pipeline->SetPrivateData(extra_data_guid, sizeof(extra_data), &extra_data);
+					pipeline->SetPrivateData(extra_data_guid, sizeof(extra_data), &extra_data);
+				}
 
 				*out_handle = to_handle(pipeline.release());
 				return true;
@@ -1216,10 +1224,11 @@ bool reshade::d3d12::device_impl::create_pipeline(api::pipeline_layout layout, u
 		reshade::d3d12::convert_rasterizer_desc(rasterizer_desc, internal_desc.RasterizerState);
 		reshade::d3d12::convert_depth_stencil_desc(depth_stencil_desc, internal_desc.DepthStencilState);
 
-		std::vector<D3D12_INPUT_ELEMENT_DESC> internal_elements;
-		reshade::d3d12::convert_input_layout_desc(input_layout_desc.count, static_cast<const api::input_element *>(input_layout_desc.data), internal_elements);
-		internal_desc.InputLayout.NumElements = static_cast<UINT>(internal_elements.size());
-		internal_desc.InputLayout.pInputElementDescs = internal_elements.data();
+		std::vector<D3D12_INPUT_ELEMENT_DESC> internal_input_layout_desc(input_layout_desc.count);
+		for (uint32_t i = 0; i < input_layout_desc.count; ++i)
+			reshade::d3d12::convert_input_element(static_cast<const api::input_element *>(input_layout_desc.data)[i], internal_input_layout_desc[i]);
+		internal_desc.InputLayout.NumElements = static_cast<UINT>(internal_input_layout_desc.size());
+		internal_desc.InputLayout.pInputElementDescs = internal_input_layout_desc.data();
 
 		internal_desc.PrimitiveTopologyType = reshade::d3d12::convert_primitive_topology_type(topology);
 
@@ -1397,11 +1406,18 @@ bool reshade::d3d12::device_impl::create_pipeline_layout(uint32_t param_count, c
 	assert(D3D12SerializeRootSignature != nullptr);
 
 	D3D12_ROOT_SIGNATURE_DESC internal_desc = {};
-	internal_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 	internal_desc.NumParameters = static_cast<uint32_t>(internal_params.size());
 	internal_desc.pParameters = internal_params.data();
 	internal_desc.NumStaticSamplers = static_cast<uint32_t>(internal_static_samplers.size());
 	internal_desc.pStaticSamplers = internal_static_samplers.data();
+	internal_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	if (std::pair<D3D12_FEATURE_DATA_SHADER_MODEL, D3D12_FEATURE_DATA_D3D12_OPTIONS> options = { { D3D_SHADER_MODEL_6_6 }, {} };
+		SUCCEEDED(_orig->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &options.first, sizeof(options.first))) &&
+		SUCCEEDED(_orig->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options.second, sizeof(options.second))) &&
+		options.first.HighestShaderModel >= D3D_SHADER_MODEL_6_6 &&
+		options.second.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3)
+		internal_desc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
 
 	com_ptr<ID3DBlob> signature_blob, error_blob;
 	com_ptr<ID3D12RootSignature> signature;

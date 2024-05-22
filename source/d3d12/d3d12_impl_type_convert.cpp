@@ -545,7 +545,7 @@ void reshade::d3d12::convert_resource_view_desc(const api::resource_view_desc &d
 {
 	// Missing fields: D3D12_DEPTH_STENCIL_VIEW_DESC::Flags
 	internal_desc.Format = convert_format(desc.format);
-	assert(desc.type != api::resource_view_type::buffer && desc.texture.level_count == 1);
+	assert(desc.type != api::resource_view_type::buffer);
 	switch (desc.type) // Do not modifiy description in case type is 'resource_view_type::unknown'
 	{
 	case api::resource_view_type::texture_1d:
@@ -581,9 +581,14 @@ void reshade::d3d12::convert_resource_view_desc(const api::resource_view_desc &d
 void reshade::d3d12::convert_resource_view_desc(const api::resource_view_desc &desc, D3D12_RENDER_TARGET_VIEW_DESC &internal_desc)
 {
 	internal_desc.Format = convert_format(desc.format);
-	assert(desc.type != api::resource_view_type::buffer && desc.texture.level_count == 1);
 	switch (desc.type) // Do not modifiy description in case type is 'resource_view_type::unknown'
 	{
+	case api::resource_view_type::buffer:
+		internal_desc.ViewDimension = D3D12_RTV_DIMENSION_BUFFER;
+		internal_desc.Buffer.FirstElement = desc.buffer.offset;
+		assert(desc.buffer.size <= std::numeric_limits<UINT>::max());
+		internal_desc.Buffer.NumElements = static_cast<UINT>(desc.buffer.size);
+		break;
 	case api::resource_view_type::texture_1d:
 		internal_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE1D;
 		internal_desc.Texture1D.MipSlice = desc.texture.first_level;
@@ -631,7 +636,12 @@ void reshade::d3d12::convert_resource_view_desc(const api::resource_view_desc &d
 		internal_desc.Buffer.FirstElement = desc.buffer.offset;
 		assert(desc.buffer.size <= std::numeric_limits<UINT>::max());
 		internal_desc.Buffer.NumElements = static_cast<UINT>(desc.buffer.size);
-		// Missing fields: D3D12_BUFFER_SRV::StructureByteStride, D3D12_BUFFER_SRV::Flags
+		// Missing fields: D3D12_BUFFER_SRV::StructureByteStride
+
+		if (internal_desc.Format == DXGI_FORMAT_R32_TYPELESS)
+			internal_desc.Buffer.Flags |= D3D12_BUFFER_SRV_FLAG_RAW;
+		else
+			internal_desc.Buffer.Flags &= ~D3D12_BUFFER_SRV_FLAG_RAW;
 		break;
 	case api::resource_view_type::texture_1d:
 		internal_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
@@ -709,7 +719,12 @@ void reshade::d3d12::convert_resource_view_desc(const api::resource_view_desc &d
 		internal_desc.Buffer.FirstElement = desc.buffer.offset;
 		assert(desc.buffer.size <= std::numeric_limits<UINT>::max());
 		internal_desc.Buffer.NumElements = static_cast<UINT>(desc.buffer.size);
-		// Missing fields: D3D12_BUFFER_UAV::StructureByteStride, D3D12_BUFFER_UAV::CounterOffsetInBytes, D3D12_BUFFER_UAV::Flags
+		// Missing fields: D3D12_BUFFER_UAV::StructureByteStride, D3D12_BUFFER_UAV::CounterOffsetInBytes
+
+		if (internal_desc.Format == DXGI_FORMAT_R32_TYPELESS)
+			internal_desc.Buffer.Flags |= D3D12_BUFFER_UAV_FLAG_RAW;
+		else
+			internal_desc.Buffer.Flags &= ~D3D12_BUFFER_UAV_FLAG_RAW;
 		break;
 	case api::resource_view_type::texture_1d:
 		internal_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
@@ -822,6 +837,11 @@ reshade::api::resource_view_desc reshade::d3d12::convert_resource_view_desc(cons
 	desc.texture.level_count = 1;
 	switch (internal_desc.ViewDimension)
 	{
+	case D3D12_RTV_DIMENSION_BUFFER:
+		desc.type = api::resource_view_type::buffer;
+		desc.buffer.offset = internal_desc.Buffer.FirstElement;
+		desc.buffer.size = internal_desc.Buffer.NumElements;
+		break;
 	case D3D12_RTV_DIMENSION_TEXTURE1D:
 		desc.type = api::resource_view_type::texture_1d;
 		desc.texture.first_level = internal_desc.Texture1D.MipSlice;
@@ -870,7 +890,8 @@ reshade::api::resource_view_desc reshade::d3d12::convert_resource_view_desc(cons
 		desc.type = api::resource_view_type::buffer;
 		desc.buffer.offset = internal_desc.Buffer.FirstElement;
 		desc.buffer.size = internal_desc.Buffer.NumElements;
-		// Missing fields: D3D12_BUFFER_SRV::StructureByteStride, D3D12_BUFFER_SRV::Flags
+		assert(((internal_desc.Buffer.Flags & D3D12_BUFFER_SRV_FLAG_RAW) != 0) == (internal_desc.Format == DXGI_FORMAT_R32_TYPELESS));
+		// Missing fields: D3D12_BUFFER_SRV::StructureByteStride
 		break;
 	case D3D12_SRV_DIMENSION_TEXTURE1D:
 		desc.type = api::resource_view_type::texture_1d;
@@ -949,7 +970,8 @@ reshade::api::resource_view_desc reshade::d3d12::convert_resource_view_desc(cons
 		desc.type = api::resource_view_type::buffer;
 		desc.buffer.offset = internal_desc.Buffer.FirstElement;
 		desc.buffer.size = internal_desc.Buffer.NumElements;
-		// Missing fields: D3D12_BUFFER_UAV::StructureByteStride, D3D12_BUFFER_UAV::CounterOffsetInBytes, D3D12_BUFFER_UAV::Flags
+		assert(((internal_desc.Buffer.Flags & D3D12_BUFFER_UAV_FLAG_RAW) != 0) == (internal_desc.Format == DXGI_FORMAT_R32_TYPELESS));
+		// Missing fields: D3D12_BUFFER_UAV::StructureByteStride, D3D12_BUFFER_UAV::CounterOffsetInBytes
 		break;
 	case D3D12_UAV_DIMENSION_TEXTURE1D:
 		desc.type = api::resource_view_type::texture_1d;
@@ -995,43 +1017,33 @@ reshade::api::shader_desc reshade::d3d12::convert_shader_desc(const D3D12_SHADER
 	return desc;
 }
 
-void reshade::d3d12::convert_input_layout_desc(uint32_t count, const api::input_element *elements, std::vector<D3D12_INPUT_ELEMENT_DESC> &internal_elements)
+void reshade::d3d12::convert_input_element(const api::input_element &desc, D3D12_INPUT_ELEMENT_DESC &internal_desc)
 {
-	internal_elements.reserve(count);
+	internal_desc.SemanticName = desc.semantic;
+	internal_desc.SemanticIndex = desc.semantic_index;
+	internal_desc.Format = convert_format(desc.format);
+	internal_desc.InputSlot = desc.buffer_binding;
+	internal_desc.AlignedByteOffset = desc.offset;
+	internal_desc.InputSlotClass = desc.instance_step_rate > 0 ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+	internal_desc.InstanceDataStepRate = desc.instance_step_rate;
 
-	for (uint32_t i = 0; i < count; ++i)
+	if (desc.semantic == nullptr)
 	{
-		const api::input_element &element = elements[i];
-
-		D3D12_INPUT_ELEMENT_DESC &internal_element = internal_elements.emplace_back();
-		internal_element.SemanticName = element.semantic;
-		internal_element.SemanticIndex = element.semantic_index;
-		internal_element.Format = convert_format(element.format);
-		internal_element.InputSlot = element.buffer_binding;
-		internal_element.AlignedByteOffset = element.offset;
-		internal_element.InputSlotClass = element.instance_step_rate > 0 ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-		internal_element.InstanceDataStepRate = element.instance_step_rate;
+		// Dozen names vertex inputs TEXCOORDx, so follow a similar logic
+		internal_desc.SemanticName = "TEXCOORD";
+		internal_desc.SemanticIndex = desc.location;
 	}
 }
-std::vector<reshade::api::input_element> reshade::d3d12::convert_input_layout_desc(const D3D12_INPUT_LAYOUT_DESC &internal_desc)
+reshade::api::input_element reshade::d3d12::convert_input_element(const D3D12_INPUT_ELEMENT_DESC &internal_desc)
 {
-	std::vector<api::input_element> elements;
-	elements.reserve(internal_desc.NumElements);
-
-	for (UINT i = 0; i < internal_desc.NumElements; ++i)
-	{
-		const D3D12_INPUT_ELEMENT_DESC &internal_element = internal_desc.pInputElementDescs[i];
-
-		api::input_element &element = elements.emplace_back();
-		element.semantic = internal_element.SemanticName;
-		element.semantic_index = internal_element.SemanticIndex;
-		element.format = convert_format(internal_element.Format);
-		element.buffer_binding = internal_element.InputSlot;
-		element.offset = internal_element.AlignedByteOffset;
-		element.instance_step_rate = internal_element.InstanceDataStepRate;
-	}
-
-	return elements;
+	api::input_element desc = {};
+	desc.semantic = internal_desc.SemanticName;
+	desc.semantic_index = internal_desc.SemanticIndex;
+	desc.format = convert_format(internal_desc.Format);
+	desc.buffer_binding = internal_desc.InputSlot;
+	desc.offset = internal_desc.AlignedByteOffset;
+	desc.instance_step_rate = internal_desc.InstanceDataStepRate;
+	return desc;
 }
 
 void reshade::d3d12::convert_stream_output_desc(const api::stream_output_desc &desc, D3D12_STREAM_OUTPUT_DESC &internal_desc)
