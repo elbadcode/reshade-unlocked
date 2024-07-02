@@ -13,6 +13,8 @@
 #include "addon_manager.hpp"
 #include "runtime_manager.hpp"
 #include "lockfree_linear_map.hpp"
+#include <cstring> // std::strcmp, std::strncmp
+#include <algorithm> // std::fill_n, std::find_if, std::min, std::sort, std::unique
 
 // Set during Vulkan device creation and presentation, to avoid hooking internal D3D devices created e.g. by NVIDIA Ansel and Optimus
 extern thread_local bool g_in_dxgi_runtime;
@@ -2748,7 +2750,10 @@ VkResult VKAPI_CALL vkCreateFramebuffer(VkDevice device, const VkFramebufferCrea
 #if RESHADE_ADDON
 	// Keep track of the frame buffer attachments
 	reshade::vulkan::object_data<VK_OBJECT_TYPE_FRAMEBUFFER> &data = *device_impl->register_object<VK_OBJECT_TYPE_FRAMEBUFFER>(*pFramebuffer);
-	data.attachments.assign(pCreateInfo->pAttachments, pCreateInfo->pAttachments + pCreateInfo->attachmentCount);
+	if ((pCreateInfo->flags & VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT) != 0)
+		data.attachments.resize(pCreateInfo->attachmentCount);
+	else
+		data.attachments.assign(pCreateInfo->pAttachments, pCreateInfo->pAttachments + pCreateInfo->attachmentCount);
 #endif
 
 	return result;

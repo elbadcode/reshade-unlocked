@@ -20,11 +20,14 @@
 #include "reshade_api_object_impl.hpp"
 #include <set>
 #include <thread>
-#include <cctype>
-#include <cstring>
 #include <fstream>
-#include <algorithm>
-#include <numeric>
+#include <cmath> // std::abs, std::fmod
+#include <cctype> // std::toupper
+#include <cwctype> // std::towlower
+#include <cstdlib> // std::malloc, std::rand, std::strtod, std::strtol
+#include <cstring> // std::memcpy, std::memset, std::strlen
+#include <charconv> // std::to_chars
+#include <algorithm> // std::all_of, std::copy_n, std::equal, std::fill_n, std::find, std::find_if, std::for_each, std::max, std::min, std::replace, std::remove, std::remove_if, std::reverse, std::search, std::sort, std::stable_sort, std::swap, std::transform
 #include <fpng.h>
 #include <stb_image.h>
 #include <stb_image_dds.h>
@@ -170,7 +173,7 @@ static std::vector<std::filesystem::path> find_files(const std::vector<std::file
 	return files;
 }
 
-static inline int format_color_bit_depth(reshade::api::format value)
+static int format_color_bit_depth(reshade::api::format value)
 {
 	switch (value)
 	{
@@ -1466,7 +1469,7 @@ bool reshade::runtime::switch_to_next_preset(std::filesystem::path filter_path, 
 		// Only add those files that are matching the filter text
 		if (filter_text.empty() ||
 			std::search(preset_name.cbegin(), preset_name.cend(), filter_text.native().begin(), filter_text.native().end(),
-				[](auto c1, auto c2) { return towlower(c1) == towlower(c2); }) != preset_name.cend())
+				[](auto c1, auto c2) { return std::towlower(c1) == std::towlower(c2); }) != preset_name.cend())
 			preset_paths.push_back(std::move(preset_path));
 	}
 
@@ -1868,7 +1871,12 @@ bool reshade::runtime::load_effect(const std::filesystem::path &source_file, con
 							code_preamble += std::to_string(constant.initializer_value.as_uint[i]);
 							break;
 						case reshadefx::type::t_float:
-							code_preamble += std::to_string(constant.initializer_value.as_float[i]);
+							char temp[64];
+							const std::to_chars_result res = std::to_chars(temp, temp + sizeof(temp), constant.initializer_value.as_float[i], std::chars_format::scientific, 8);
+							if (res.ec == std::errc())
+								code_preamble.append(temp, res.ptr);
+							else
+								assert(false);
 							break;
 						}
 
@@ -2597,34 +2605,38 @@ bool reshade::runtime::create_effect(size_t effect_index)
 			else
 			{
 				api::shader_desc vs_desc = {};
-				const std::string &vs = effect.assembly.at(pass_info.vs_entry_point);
-				vs_desc.code = vs.data();
-				vs_desc.code_size = vs.size();
-				if (_renderer_id & 0x20000)
+				if (!pass_info.vs_entry_point.empty())
 				{
-					vs_desc.entry_point = pass_info.vs_entry_point.c_str();
-					vs_desc.spec_constants = static_cast<uint32_t>(effect.module.spec_constants.size());
-					vs_desc.spec_constant_ids = spec_constants.data();
-					vs_desc.spec_constant_values = spec_data.data();
-				}
+					const std::string &vs = effect.assembly.at(pass_info.vs_entry_point);
+					vs_desc.code = vs.data();
+					vs_desc.code_size = vs.size();
+					if (_renderer_id & 0x20000)
+					{
+						vs_desc.entry_point = pass_info.vs_entry_point.c_str();
+						vs_desc.spec_constants = static_cast<uint32_t>(effect.module.spec_constants.size());
+						vs_desc.spec_constant_ids = spec_constants.data();
+						vs_desc.spec_constant_values = spec_data.data();
+					}
 
-				subobjects.push_back({ api::pipeline_subobject_type::vertex_shader, 1, &vs_desc });
+					subobjects.push_back({ api::pipeline_subobject_type::vertex_shader, 1, &vs_desc });
+				}
 
 				api::shader_desc ps_desc = {};
-				const std::string &ps = effect.assembly.at(pass_info.ps_entry_point);
-				ps_desc.code = ps.data();
-				ps_desc.code_size = ps.size();
-				if (_renderer_id & 0x20000)
+				if (!pass_info.ps_entry_point.empty())
 				{
-					ps_desc.entry_point = pass_info.ps_entry_point.c_str();
-					ps_desc.spec_constants = static_cast<uint32_t>(effect.module.spec_constants.size());
-					ps_desc.spec_constant_ids = spec_constants.data();
-					ps_desc.spec_constant_values = spec_data.data();
+					const std::string &ps = effect.assembly.at(pass_info.ps_entry_point);
+					ps_desc.code = ps.data();
+					ps_desc.code_size = ps.size();
+					if (_renderer_id & 0x20000)
+					{
+						ps_desc.entry_point = pass_info.ps_entry_point.c_str();
+						ps_desc.spec_constants = static_cast<uint32_t>(effect.module.spec_constants.size());
+						ps_desc.spec_constant_ids = spec_constants.data();
+						ps_desc.spec_constant_values = spec_data.data();
+					}
+
+					subobjects.push_back({ api::pipeline_subobject_type::pixel_shader, 1, &ps_desc });
 				}
-
-				subobjects.push_back({ api::pipeline_subobject_type::pixel_shader, 1, &ps_desc });
-
-				assert(pass_info.srgb_write_enable < 2);
 
 				api::format render_target_formats[8] = {};
 
@@ -2836,13 +2848,11 @@ bool reshade::runtime::create_effect(size_t effect_index)
 							write.table,
 							write.binding,
 							sampler_with_resource_view ? sampler_descriptors[info.binding].sampler : api::sampler { 0 },
-							!!info.srgb
+							info.srgb
 						});
 					}
 					else
 					{
-						assert(info.srgb < 2);
-
 						srv = sampler_texture->srv[info.srgb];
 					}
 
@@ -3524,10 +3534,10 @@ void reshade::runtime::load_effects(bool force_load_all)
 
 	// Now that we have a list of files, load them in parallel
 	// Split workload into batches instead of launching a thread for every file to avoid launch overhead and stutters due to too many threads being in flight
-	size_t num_splits = std::min<size_t>(effect_files.size(), std::max<size_t>(std::thread::hardware_concurrency(), 2u) - 1);
+	size_t num_splits = std::min(effect_files.size(), static_cast<size_t>(std::max(std::thread::hardware_concurrency(), 2u) - 1));
 #ifndef _WIN64
 	// Limit number of threads in 32-bit due to the limited about of address space being available there and compilation being memory hungry
-	num_splits = std::min<size_t>(num_splits, 4);
+	num_splits = std::min(num_splits, static_cast<size_t>(4));
 #endif
 
 	// Keep track of the spawned threads, so the runtime cannot be destroyed while they are still running
@@ -3951,7 +3961,7 @@ void reshade::runtime::render_effects(api::command_list *cmd_list, api::resource
 					const float max = variable.annotation_as_float("max", 0, 1.0f);
 					const float step_min = variable.annotation_as_float("step", 0);
 					const float step_max = variable.annotation_as_float("step", 1);
-					float increment = step_max == 0 ? step_min : (step_min + std::fmodf(static_cast<float>(std::rand()), step_max - step_min + 1));
+					float increment = step_max == 0 ? step_min : (step_min + std::fmod(static_cast<float>(std::rand()), step_max - step_min + 1));
 					const float smoothing = variable.annotation_as_float("smoothing");
 
 					float value[2] = { 0, 0 };
@@ -4561,7 +4571,7 @@ void reshade::runtime::reset_uniform_value(uniform &variable)
 		return;
 	}
 
-	static const reshadefx::constant zero = {};
+	const reshadefx::constant zero = {};
 
 	// Need to use typed setters, to ensure values are properly forced to floating point in D3D9
 	for (size_t i = 0, array_length = (variable.type.is_array() ? variable.type.array_length : 1u); i < array_length; ++i)
@@ -4584,7 +4594,7 @@ void reshade::runtime::reset_uniform_value(uniform &variable)
 	}
 }
 
-static inline bool force_floating_point_value(const reshadefx::type &type, uint32_t renderer_id)
+static bool force_floating_point_value(const reshadefx::type &type, uint32_t renderer_id)
 {
 	if (renderer_id == 0x9000)
 		return true; // All uniform variables are floating-point in D3D9

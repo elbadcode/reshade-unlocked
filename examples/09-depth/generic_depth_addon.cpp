@@ -5,12 +5,12 @@
 
 #include <imgui.h>
 #include <reshade.hpp>
-#include <cmath>
-#include <cstring>
-#include <algorithm>
 #include <vector>
 #include <shared_mutex>
 #include <unordered_map>
+#include <cmath> // std::abs, std::modf
+#include <cstring> // std::strcmp
+#include <algorithm> // std::find_if, std::remove, std::sort
 #include <Unknwn.h>
 
 using namespace reshade::api;
@@ -56,7 +56,7 @@ struct depth_stencil_frame_stats
 
 struct resource_hash
 {
-	inline size_t operator()(resource value) const
+	size_t operator()(resource value) const
 	{
 		// Simply use the handle (which is usually a pointer) as hash value (with some bits shaved off due to pointer alignment)
 		return static_cast<size_t>(value.handle >> 4);
@@ -330,7 +330,7 @@ static bool check_aspect_ratio(float width_to_check, float height_to_check, floa
 	const float aspect_ratio_delta = (width / height) - (width_to_check / height_to_check);
 
 	// Accept if dimensions are similar in value or almost exact multiples
-	return std::fabs(aspect_ratio_delta) <= 0.1f && ((w_ratio <= 1.85f && w_ratio >= 0.5f && h_ratio <= 1.85f && h_ratio >= 0.5f) ||
+	return std::abs(aspect_ratio_delta) <= 0.1f && ((w_ratio <= 1.85f && w_ratio >= 0.5f && h_ratio <= 1.85f && h_ratio >= 0.5f) ||
 		(s_use_aspect_ratio_heuristics == 2 && std::modf(w_ratio, &w_ratio) <= 0.02f && std::modf(h_ratio, &h_ratio) <= 0.02f));
 }
 
@@ -1085,7 +1085,7 @@ static void on_finish_render_effects(effect_runtime *runtime, command_list *cmd_
 	}
 }
 
-static inline const char *format_to_string(format format)
+static const char *const format_to_string(format format)
 {
 	switch (format)
 	{

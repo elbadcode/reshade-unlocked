@@ -4,11 +4,12 @@
  */
 
 #include "ini_file.hpp"
-#include <cctype>
-#include <cassert>
 #include <fstream>
 #include <sstream>
 #include <shared_mutex>
+#include <cctype> // std::toupper
+#include <cassert>
+#include <algorithm> // std::min, std::sort, std::transform
 
 static std::shared_mutex s_ini_cache_mutex;
 static std::unordered_map<std::wstring, std::unique_ptr<ini_file>> s_ini_cache;
@@ -48,7 +49,7 @@ bool ini_file::load()
 	std::string line, section;
 	while (std::getline(file, line))
 	{
-		trim(line);
+		line = trim(line);
 
 		if (line.empty() || line[0] == ';' || line[0] == '/' || line[0] == '#')
 			continue;

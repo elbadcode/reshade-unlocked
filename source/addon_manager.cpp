@@ -9,6 +9,7 @@
 #include "addon_manager.hpp"
 #include "dll_log.hpp"
 #include "ini_file.hpp"
+#include <algorithm> // std::find, std::find_if, std::remove, std::remove_if
 
 extern void register_addon_depth();
 extern void register_addon_effect_runtime_sync();
@@ -418,11 +419,9 @@ bool ReShadeRegisterAddon(HMODULE module, uint32_t api_version)
 		}
 	}
 
-	if (const char *const *name = reinterpret_cast<const char *const *>(GetProcAddress(module, "NAME"));
-		name != nullptr)
+	if (const char *const *name = reinterpret_cast<const char *const *>(GetProcAddress(module, "NAME")))
 		info.name = *name;
-	if (const char *const *description = reinterpret_cast<const char *const *>(GetProcAddress(module, "DESCRIPTION"));
-		description != nullptr)
+	if (const char *const *description = reinterpret_cast<const char *const *>(GetProcAddress(module, "DESCRIPTION")))
 		info.description = *description;
 
 	if (std::find_if(reshade::addon_loaded_info.cbegin(), reshade::addon_loaded_info.cend(),

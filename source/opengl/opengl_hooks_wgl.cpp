@@ -15,6 +15,9 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <cmath> // std::log2f
+#include <cstring> // std::strcmp
+#include <algorithm> // std::any_of, std::find_if
 
 #define gl gl3wProcs.gl
 
@@ -144,7 +147,8 @@ public:
 			/* Signed integer uniforms */ reshade::api::constant_range { UINT32_MAX, 0, 0, static_cast<uint32_t>(max_uniform_locations) * 4, reshade::api::shader_stage::all },
 			/* Unsigned integer uniforms */ reshade::api::constant_range { UINT32_MAX, 0, 0, static_cast<uint32_t>(max_uniform_locations) * 4, reshade::api::shader_stage::all },
 		};
-		reshade::invoke_addon_event<reshade::addon_event::init_pipeline_layout>(this, static_cast<uint32_t>(std::size(global_pipeline_layout_params)), global_pipeline_layout_params, reshade::opengl::global_pipeline_layout);
+		device_impl::create_pipeline_layout(static_cast<uint32_t>(std::size(global_pipeline_layout_params)), global_pipeline_layout_params, &_global_pipeline_layout);
+		reshade::invoke_addon_event<reshade::addon_event::init_pipeline_layout>(this, static_cast<uint32_t>(std::size(global_pipeline_layout_params)), global_pipeline_layout_params, _global_pipeline_layout);
 
 		reshade::invoke_addon_event<reshade::addon_event::init_command_list>(this);
 		reshade::invoke_addon_event<reshade::addon_event::init_command_queue>(this);
@@ -156,7 +160,8 @@ public:
 		reshade::invoke_addon_event<reshade::addon_event::destroy_command_queue>(this);
 		reshade::invoke_addon_event<reshade::addon_event::destroy_command_list>(this);
 
-		reshade::invoke_addon_event<reshade::addon_event::destroy_pipeline_layout>(this, reshade::opengl::global_pipeline_layout);
+		reshade::invoke_addon_event<reshade::addon_event::destroy_pipeline_layout>(this, _global_pipeline_layout);
+		device_impl::destroy_pipeline_layout(_global_pipeline_layout);
 
 		reshade::invoke_addon_event<reshade::addon_event::destroy_device>(this);
 
@@ -165,6 +170,8 @@ public:
 	}
 
 	auto get_pixel_format() const { return _pixel_format; }
+
+	auto get_pipeline_layout() const { return _global_pipeline_layout; }
 
 	reshade::api::resource_desc get_resource_desc(reshade::api::resource resource) const final
 	{
@@ -179,6 +186,9 @@ public:
 
 		return desc;
 	}
+
+private:
+	reshade::api::pipeline_layout _global_pipeline_layout = {};
 };
 class wgl_device_context : public reshade::opengl::device_context_impl
 {
@@ -337,6 +347,11 @@ private:
 	unsigned int _last_height = 0;
 	bool _init_effect_runtime = true;
 };
+
+reshade::api::pipeline_layout get_opengl_pipeline_layout()
+{
+	return static_cast<wgl_device *>(g_current_context->get_device())->get_pipeline_layout();
+}
 
 extern "C" int   WINAPI wglChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR *ppfd)
 {
@@ -1298,7 +1313,7 @@ extern "C" BOOL  WINAPI wglSwapLayerBuffers(HDC hdc, UINT i)
 {
 	if (i != WGL_SWAP_MAIN_PLANE)
 	{
-		const int index = i >= WGL_SWAP_UNDERLAY1 ? static_cast<int>(-std::log(i >> 16) / std::log(2) - 1) : static_cast<int>(std::log(i) / std::log(2));
+		const int index = (i >= WGL_SWAP_UNDERLAY1) ? static_cast<int>(-std::log2f(static_cast<float>(i >> 16)) - 1) : static_cast<int>(std::log2f(static_cast<float>(i)));
 
 #if RESHADE_VERBOSE_LOG
 		LOG(INFO) << "Redirecting " << "wglSwapLayerBuffers" << '(' << "hdc = " << hdc << ", i = " << i << ')' << " ...";

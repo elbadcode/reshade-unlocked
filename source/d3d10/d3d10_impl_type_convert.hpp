@@ -9,6 +9,7 @@
 #include "com_ptr.hpp"
 #include "reshade_api_pipeline.hpp"
 #include <vector>
+#include <limits>
 
 namespace reshade::d3d10
 {
@@ -58,8 +59,6 @@ namespace reshade::d3d10
 		uint64_t current_value;
 		com_ptr<ID3D10Query> event_queries[8];
 	};
-
-	constexpr api::pipeline_layout global_pipeline_layout = { 0xFFFFFFFFFFFFFFFF };
 
 	auto convert_format(api::format format) -> DXGI_FORMAT;
 	auto convert_format(DXGI_FORMAT format) -> api::format;
